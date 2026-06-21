@@ -2,6 +2,7 @@ const { app, BrowserWindow } = require('electron');
 const path = require('path');
 
 let mainWindow;
+let willQuit = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -10,6 +11,7 @@ function createWindow() {
     minWidth: 1280,
     minHeight: 768,
     title: '微整注射点位记录',
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -17,34 +19,36 @@ function createWindow() {
     },
   });
 
-  const isDev = !app.isPackaged;
-
-  if (isDev) {
+  if (!app.isPackaged) {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
 
+app.on('before-quit', () => {
+  willQuit = true;
+});
+
 app.whenReady().then(() => {
-  const dataDir = path.join(app.getPath('userData'), 'indexeddb');
-  console.log('数据存储路径:', dataDir);
   createWindow();
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  app.quit();
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (mainWindow === null) {
     createWindow();
   }
 });
