@@ -45,6 +45,8 @@ export default function PrintPreview() {
       remindDate: followUpDate,
       content: `复诊提醒 - ${treatment?.projectName ?? ''}`,
       completed: false,
+      contacted: false,
+      contactResult: '',
     });
     setActiveTab('calendar');
   };

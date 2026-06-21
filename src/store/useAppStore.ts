@@ -44,10 +44,15 @@ interface AppState {
   deletePhoto: (id: number) => Promise<void>;
 
   reminders: Reminder[];
+  selectedReminderId: number | null;
+  setSelectedReminderId: (id: number | null) => void;
   loadReminders: () => Promise<void>;
   addReminder: (r: Omit<Reminder, 'id'>) => Promise<void>;
   updateReminder: (id: number, r: Partial<Reminder>) => Promise<void>;
   deleteReminder: (id: number) => Promise<void>;
+
+  refreshAll: () => Promise<void>;
+  resetAllSelections: () => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -72,7 +77,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectedCustomerId: null,
   setSelectedCustomerId: (id) => {
-    set({ selectedCustomerId: id, selectedTreatmentId: null, treatments: [], points: [], photos: [] });
+    set({
+      selectedCustomerId: id,
+      selectedTreatmentId: null,
+      selectedPointId: null,
+      selectedReminderId: null,
+      treatments: [],
+      points: [],
+      photos: [],
+    });
     if (id) get().loadTreatments(id);
   },
 
@@ -94,11 +107,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     await db.treatments.update(id, t);
     const cid = get().selectedCustomerId;
     if (cid) await get().loadTreatments(cid);
+    else await get().loadAllTreatments();
   },
 
   selectedTreatmentId: null,
   setSelectedTreatmentId: (id) => {
-    set({ selectedTreatmentId: id, points: [], photos: [], selectedPointId: null });
+    set({
+      selectedTreatmentId: id,
+      points: [],
+      photos: [],
+      selectedPointId: null,
+    });
     if (id) {
       get().loadPoints(id);
       get().loadPhotos(id);
@@ -151,12 +170,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   reminders: [],
+  selectedReminderId: null,
+  setSelectedReminderId: (id) => set({ selectedReminderId: id }),
   loadReminders: async () => {
     const reminders = await db.reminders.orderBy('remindDate').toArray();
     set({ reminders });
   },
   addReminder: async (r) => {
-    await db.reminders.add(r);
+    const fullR: Omit<Reminder, 'id'> = {
+      ...r,
+      contacted: r.contacted ?? false,
+      contactResult: r.contactResult ?? '',
+    };
+    await db.reminders.add(fullR);
     await get().loadReminders();
   },
   updateReminder: async (id, r) => {
@@ -166,5 +192,32 @@ export const useAppStore = create<AppState>((set, get) => ({
   deleteReminder: async (id) => {
     await db.reminders.delete(id);
     await get().loadReminders();
+  },
+
+  refreshAll: async () => {
+    const cid = get().selectedCustomerId;
+    const tid = get().selectedTreatmentId;
+    await get().loadCustomers();
+    await get().loadAllTreatments();
+    await get().loadReminders();
+    if (cid) {
+      await get().loadTreatments(cid);
+      if (tid) {
+        await get().loadPoints(tid);
+        await get().loadPhotos(tid);
+      }
+    }
+  },
+
+  resetAllSelections: () => {
+    set({
+      selectedCustomerId: null,
+      selectedTreatmentId: null,
+      selectedPointId: null,
+      selectedReminderId: null,
+      treatments: [],
+      points: [],
+      photos: [],
+    });
   },
 }));

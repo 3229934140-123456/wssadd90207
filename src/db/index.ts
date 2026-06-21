@@ -17,6 +17,14 @@ class AppDatabase extends Dexie {
       photos: '++id, treatmentId, type, takenAt',
       reminders: '++id, treatmentId, customerId, remindDate, completed',
     });
+    this.version(2).stores({
+      reminders: '++id, treatmentId, customerId, remindDate, completed, contacted',
+    }).upgrade(async (tx) => {
+      await tx.table('reminders').toCollection().modify((reminder: Reminder) => {
+        if (reminder.contacted === undefined) reminder.contacted = false;
+        if (reminder.contactResult === undefined) reminder.contactResult = '';
+      });
+    });
   }
 }
 
@@ -29,6 +37,25 @@ export async function exportAllData() {
   const photos = await db.photos.toArray();
   const reminders = await db.reminders.toArray();
   return JSON.stringify({ customers, treatments, injectionPoints, photos, reminders }, null, 2);
+}
+
+export interface BackupStats {
+  customers: number;
+  treatments: number;
+  injectionPoints: number;
+  photos: number;
+  reminders: number;
+}
+
+export function getBackupStats(json: string): BackupStats {
+  const data = JSON.parse(json);
+  return {
+    customers: data.customers?.length || 0,
+    treatments: data.treatments?.length || 0,
+    injectionPoints: data.injectionPoints?.length || 0,
+    photos: data.photos?.length || 0,
+    reminders: data.reminders?.length || 0,
+  };
 }
 
 export async function importAllData(json: string) {

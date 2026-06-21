@@ -46,6 +46,9 @@ export interface Reminder {
   remindDate: string;
   content: string;
   completed: boolean;
+  contacted: boolean;
+  contactResult: string;
+  contactedAt?: string;
 }
 
 export type TemplateView = 'front' | '45deg' | 'side';

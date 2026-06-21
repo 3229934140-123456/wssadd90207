@@ -1,13 +1,13 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
 import type { TabName } from '@/types';
-import { exportAllData, importAllData } from '@/db';
+import { exportAllData, importAllData, getBackupStats, type BackupStats } from '@/db';
 import CustomerList from '@/components/CustomerList';
 import PointCanvas from '@/components/PointCanvas';
 import PhotoFolder from '@/components/PhotoFolder';
 import PrintPreview from '@/components/PrintPreview';
 import ReminderCalendar from '@/components/ReminderCalendar';
-import { Users, Crosshair, Image, Printer, Calendar, Download, Upload, Syringe } from 'lucide-react';
+import { Users, Crosshair, Image, Printer, Calendar, Download, Upload, Syringe, X, AlertTriangle, Database } from 'lucide-react';
 
 const TABS: { key: TabName; label: string; icon: typeof Users }[] = [
   { key: 'customers', label: '客户列表', icon: Users },
@@ -18,13 +18,26 @@ const TABS: { key: TabName; label: string; icon: typeof Users }[] = [
 ];
 
 export default function App() {
-  const { activeTab, setActiveTab, loadCustomers, loadReminders, selectedCustomerId, selectedTreatmentId } = useAppStore();
+  const {
+    activeTab, setActiveTab, loadCustomers, loadReminders, loadAllTreatments,
+    selectedCustomerId, selectedTreatmentId, refreshAll, loadTreatments,
+    resetAllSelections,
+  } = useAppStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [pendingBackup, setPendingBackup] = useState<{ text: string; stats: BackupStats } | null>(null);
 
   useEffect(() => {
     loadCustomers();
+    loadAllTreatments();
     loadReminders();
-  }, [loadCustomers, loadReminders]);
+  }, [loadCustomers, loadAllTreatments, loadReminders]);
+
+  useEffect(() => {
+    if (activeTab === 'customers' && selectedCustomerId) {
+      loadTreatments(selectedCustomerId);
+    }
+  }, [activeTab, selectedCustomerId, loadTreatments]);
 
   const handleExport = async () => {
     const data = await exportAllData();
@@ -37,19 +50,37 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const text = await file.text();
     try {
-      await importAllData(text);
-      await loadCustomers();
-      await loadReminders();
-      alert('数据导入成功！');
+      const stats = getBackupStats(text);
+      setPendingBackup({ text, stats });
+      setShowRestoreConfirm(true);
     } catch {
-      alert('导入失败，请检查文件格式。');
+      alert('备份文件格式不正确，请检查文件。');
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const confirmRestore = async () => {
+    if (!pendingBackup) return;
+    try {
+      await importAllData(pendingBackup.text);
+      resetAllSelections();
+      await refreshAll();
+      alert('数据恢复成功！所有页面已刷新。');
+    } catch {
+      alert('恢复失败，请检查备份文件。');
+    }
+    setShowRestoreConfirm(false);
+    setPendingBackup(null);
+  };
+
+  const cancelRestore = () => {
+    setShowRestoreConfirm(false);
+    setPendingBackup(null);
   };
 
   const renderContent = () => {
@@ -77,6 +108,8 @@ export default function App() {
       case 'calendar': return <ReminderCalendar />;
     }
   };
+
+  const currentCustomer = useAppStore.getState().customers.find(c => c.id === selectedCustomerId);
 
   return (
     <div className="h-full flex flex-col bg-[#0d0d1a]">
@@ -107,9 +140,9 @@ export default function App() {
           </nav>
         </div>
         <div className="flex items-center gap-2">
-          {selectedCustomerId && (
+          {selectedCustomerId && currentCustomer && (
             <span className="text-xs text-[#E8D5B7]/40 mr-2">
-              {useAppStore.getState().customers.find(c => c.id === selectedCustomerId)?.name}
+              当前：{currentCustomer.name}
             </span>
           )}
           <button
@@ -128,12 +161,72 @@ export default function App() {
             <Upload size={14} />
             <span>恢复</span>
           </button>
-          <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
+          <input ref={fileInputRef} type="file" accept=".json" onChange={handleRestoreFile} className="hidden" />
         </div>
       </header>
       <main className="flex-1 overflow-hidden">
         {renderContent()}
       </main>
+
+      {showRestoreConfirm && pendingBackup && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-6">
+          <div className="bg-[#1A1A2E] rounded-xl border border-[#16213E] shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#16213E] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Database className="w-5 h-5 text-[#E8D5B7]" />
+                <span className="text-[#E8D5B7] font-semibold text-sm">确认恢复备份</span>
+              </div>
+              <button onClick={cancelRestore} className="text-[#E8D5B7]/40 hover:text-[#E8D5B7]">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5">
+              <div className="flex items-start gap-3 p-3 rounded-lg bg-[#E94560]/10 border border-[#E94560]/30 mb-4">
+                <AlertTriangle className="w-5 h-5 text-[#E94560] flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-[#E8D5B7]/80">
+                  <div className="font-medium text-[#E94560] mb-1">此操作将覆盖当前所有数据</div>
+                  <div>恢复完成后，现有客户、疗程、照片和提醒将被备份文件中的数据完全替换，不可撤销。</div>
+                </div>
+              </div>
+
+              <div className="text-xs text-[#E8D5B7]/60 mb-3">备份文件包含以下数据：</div>
+              <div className="grid grid-cols-2 gap-2 mb-5">
+                <div className="rounded-lg bg-[#16213E] p-3 text-center">
+                  <div className="text-lg font-semibold text-[#E8D5B7]">{pendingBackup.stats.customers}</div>
+                  <div className="text-[11px] text-[#E8D5B7]/50">客户档案</div>
+                </div>
+                <div className="rounded-lg bg-[#16213E] p-3 text-center">
+                  <div className="text-lg font-semibold text-[#E8D5B7]">{pendingBackup.stats.treatments}</div>
+                  <div className="text-[11px] text-[#E8D5B7]/50">治疗记录</div>
+                </div>
+                <div className="rounded-lg bg-[#16213E] p-3 text-center">
+                  <div className="text-lg font-semibold text-[#E8D5B7]">{pendingBackup.stats.photos}</div>
+                  <div className="text-[11px] text-[#E8D5B7]/50">照片归档</div>
+                </div>
+                <div className="rounded-lg bg-[#16213E] p-3 text-center">
+                  <div className="text-lg font-semibold text-[#E8D5B7]">{pendingBackup.stats.reminders}</div>
+                  <div className="text-[11px] text-[#E8D5B7]/50">复诊提醒</div>
+                </div>
+                {pendingBackup.stats.injectionPoints > 0 && (
+                  <div className="col-span-2 rounded-lg bg-[#16213E] p-3 text-center">
+                    <div className="text-lg font-semibold text-[#E8D5B7]">{pendingBackup.stats.injectionPoints}</div>
+                    <div className="text-[11px] text-[#E8D5B7]/50">注射点位记录</div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <button onClick={cancelRestore} className="flex-1 py-2 rounded-lg text-sm bg-[#16213E] text-[#E8D5B7]/60 hover:bg-[#16213E]/80">
+                  取消
+                </button>
+                <button onClick={confirmRestore} className="flex-1 py-2 rounded-lg text-sm font-medium bg-[#E94560] text-white hover:bg-[#E94560]/90">
+                  确认恢复
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
