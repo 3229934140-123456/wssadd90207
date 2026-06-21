@@ -16,6 +16,7 @@ interface AppState {
 
   treatments: Treatment[];
   loadTreatments: (customerId: number) => Promise<void>;
+  loadAllTreatments: () => Promise<void>;
   addTreatment: (t: Omit<Treatment, 'id' | 'createdAt'>) => Promise<Treatment>;
   updateTreatment: (id: number, t: Partial<Treatment>) => Promise<void>;
 
@@ -78,6 +79,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   treatments: [],
   loadTreatments: async (customerId) => {
     const treatments = await db.treatments.where('customerId').equals(customerId).reverse().sortBy('date');
+    set({ treatments });
+  },
+  loadAllTreatments: async () => {
+    const treatments = await db.treatments.orderBy('date').reverse().toArray();
     set({ treatments });
   },
   addTreatment: async (t) => {

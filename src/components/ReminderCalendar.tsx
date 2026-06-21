@@ -1,15 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, Bell, Trash2, Plus, Check } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 
 export default function ReminderCalendar() {
-  const { reminders, customers, treatments, loadReminders, addReminder, updateReminder, deleteReminder } = useAppStore();
+  const { reminders, customers, treatments, loadReminders, loadAllTreatments, addReminder, updateReminder, deleteReminder } = useAppStore();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ remindDate: '', content: '', customerId: 0 });
+  const [form, setForm] = useState({ remindDate: '', content: '', customerId: 0, treatmentId: 0 });
 
-  useEffect(() => { loadReminders(); }, [loadReminders]);
+  useEffect(() => {
+    loadReminders();
+    loadAllTreatments();
+  }, [loadReminders, loadAllTreatments]);
 
   useEffect(() => {
     const today = new Date().toISOString().slice(0, 10);
@@ -28,19 +31,51 @@ export default function ReminderCalendar() {
   const prevMonth = () => setCurrentMonth(new Date(year, month - 1, 1));
   const nextMonth = () => setCurrentMonth(new Date(year, month + 1, 1));
 
-  const getCustomerName = (id: number) => customers.find(c => c.id === id)?.name ?? '未知';
-  const getProjectName = (id: number) => treatments.find(t => t.id === id)?.projectName ?? '未知';
+  const getCustomerName = (id: number) => {
+    const c = customers.find(c => c.id === id);
+    return c ? c.name : '未建档客户';
+  };
 
-  const filteredReminders = selectedDate
-    ? reminders.filter(r => r.remindDate === selectedDate)
-    : reminders.filter(r => r.remindDate >= todayStr && !r.completed).sort((a, b) => a.remindDate.localeCompare(b.remindDate));
+  const getProjectName = (id: number) => {
+    const t = treatments.find(t => t.id === id);
+    return t ? t.projectName : '通用提醒';
+  };
+
+  const filteredReminders = useMemo(() => {
+    const sorted = [...reminders].sort((a, b) => a.remindDate.localeCompare(b.remindDate));
+    if (selectedDate) return sorted.filter(r => r.remindDate === selectedDate);
+    return sorted.filter(r => r.remindDate >= todayStr && !r.completed);
+  }, [reminders, selectedDate, todayStr]);
+
+  const customerTreatments = useMemo(() => {
+    if (!form.customerId) return [];
+    return treatments
+      .filter(t => t.customerId === form.customerId)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [form.customerId, treatments]);
+
+  const handleCustomerChange = (cid: number) => {
+    const tList = treatments.filter(t => t.customerId === cid).sort((a, b) => b.date.localeCompare(a.date));
+    const defaultTid = tList.length > 0 ? tList[0].id || 0 : 0;
+    const defaultContent = tList.length > 0 ? `复诊提醒 - ${tList[0].projectName}` : '复诊提醒';
+    setForm(f => ({ ...f, customerId: cid, treatmentId: defaultTid, content: defaultContent }));
+  };
+
+  const handleTreatmentChange = (tid: number) => {
+    const t = treatments.find(t => t.id === tid);
+    setForm(f => ({ ...f, treatmentId: tid, content: t ? `复诊提醒 - ${t.projectName}` : f.content }));
+  };
 
   const handleAdd = () => {
     if (!form.remindDate || !form.content || !form.customerId) return;
-    const customerTreatments = treatments.filter(t => t.customerId === form.customerId);
-    const tid = customerTreatments.length > 0 ? customerTreatments[0].id! : 0;
-    addReminder({ treatmentId: tid, customerId: form.customerId, remindDate: form.remindDate, content: form.content, completed: false });
-    setForm({ remindDate: '', content: '', customerId: 0 });
+    addReminder({
+      treatmentId: form.treatmentId,
+      customerId: form.customerId,
+      remindDate: form.remindDate,
+      content: form.content,
+      completed: false,
+    });
+    setForm({ remindDate: '', content: '', customerId: 0, treatmentId: 0 });
     setShowForm(false);
   };
 
@@ -92,11 +127,16 @@ export default function ReminderCalendar() {
           )}
           {filteredReminders.map(r => (
             <div key={r.id} className="rounded-lg p-3 bg-[#1A1A2E]">
-              <div className="flex items-center justify-between">
-                <span className={`text-sm font-medium ${r.completed ? 'line-through text-[#E8D5B7]/40' : ''}`}>
-                  {getCustomerName(r.customerId)} · {getProjectName(r.treatmentId)}
-                </span>
-                <div className="flex items-center gap-1">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className={`text-sm font-medium ${r.completed ? 'line-through text-[#E8D5B7]/40' : ''}`}>
+                    {getCustomerName(r.customerId)}
+                  </div>
+                  <div className={`text-xs mt-0.5 ${r.completed ? 'line-through text-[#E8D5B7]/40' : 'text-[#E8D5B7]/70'}`}>
+                    {getProjectName(r.treatmentId)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5 flex-shrink-0">
                   <button onClick={() => updateReminder(r.id!, { completed: !r.completed })}
                     className={`p-1 rounded ${r.completed ? 'text-green-400' : 'text-[#E8D5B7]/40 hover:text-green-400'}`}>
                     <Check size={14} />
@@ -106,26 +146,39 @@ export default function ReminderCalendar() {
                   </button>
                 </div>
               </div>
-              <span className={`text-xs ${r.completed ? 'line-through text-[#E8D5B7]/40' : 'text-[#E8D5B7]/70'}`}>{r.content}</span>
+              <div className={`text-xs mt-1.5 ${r.completed ? 'line-through text-[#E8D5B7]/40' : 'text-[#E8D5B7]/60'}`}>{r.content}</div>
               <div className="text-xs text-[#E8D5B7]/30 mt-1">{r.remindDate}</div>
             </div>
           ))}
         </div>
         <div className="p-3 border-t border-[#0F3460]">
           {showForm ? (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <input type="date" value={form.remindDate} onChange={e => setForm(f => ({ ...f, remindDate: e.target.value }))}
                 className="w-full px-3 py-1.5 rounded-lg text-sm bg-[#1A1A2E] text-[#E8D5B7] border border-[#0F3460] outline-none" />
-              <input type="text" placeholder="提醒内容" value={form.content} onChange={e => setForm(f => ({ ...f, content: e.target.value }))}
-                className="w-full px-3 py-1.5 rounded-lg text-sm bg-[#1A1A2E] text-[#E8D5B7] border border-[#0F3460] outline-none placeholder:text-[#E8D5B7]/30" />
-              <select value={form.customerId} onChange={e => setForm(f => ({ ...f, customerId: Number(e.target.value) }))}
+              <select value={form.customerId} onChange={e => handleCustomerChange(Number(e.target.value))}
                 className="w-full px-3 py-1.5 rounded-lg text-sm bg-[#1A1A2E] text-[#E8D5B7] border border-[#0F3460] outline-none">
                 <option value={0}>选择客户</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name} · {c.phone}</option>)}
               </select>
+              {form.customerId > 0 && (
+                <select value={form.treatmentId} onChange={e => handleTreatmentChange(Number(e.target.value))}
+                  className="w-full px-3 py-1.5 rounded-lg text-sm bg-[#1A1A2E] text-[#E8D5B7] border border-[#0F3460] outline-none">
+                  {customerTreatments.length === 0 ? (
+                    <option value={0}>该客户暂无疗程</option>
+                  ) : (
+                    customerTreatments.map(t => (
+                      <option key={t.id} value={t.id}>{t.projectName} · {t.date}</option>
+                    ))
+                  )}
+                </select>
+              )}
+              <input type="text" placeholder="提醒内容" value={form.content} onChange={e => setForm(f => ({ ...f, content: e.target.value }))}
+                className="w-full px-3 py-1.5 rounded-lg text-sm bg-[#1A1A2E] text-[#E8D5B7] border border-[#0F3460] outline-none placeholder:text-[#E8D5B7]/30" />
               <div className="flex gap-2">
                 <button onClick={handleAdd} className="flex-1 py-1.5 rounded-lg text-sm font-medium bg-[#0F3460] text-[#E8D5B7]">确认</button>
-                <button onClick={() => setShowForm(false)} className="flex-1 py-1.5 rounded-lg text-sm bg-[#1A1A2E] text-[#E8D5B7]/60">取消</button>
+                <button onClick={() => { setShowForm(false); setForm({ remindDate: '', content: '', customerId: 0, treatmentId: 0 }); }}
+                  className="flex-1 py-1.5 rounded-lg text-sm bg-[#1A1A2E] text-[#E8D5B7]/60">取消</button>
               </div>
             </div>
           ) : (
