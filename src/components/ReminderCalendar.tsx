@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Bell, Trash2, Plus, Check, Phone, Calendar as CalendarIcon, User, Syringe, ArrowRight, AlertTriangle, Clock } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
-import type { Reminder } from '@/types';
+import { db } from '@/db';
+import type { Reminder, InjectionPoint } from '@/types';
 
 type FilterKey = 'today' | 'overdue' | 'week' | 'completed';
 
@@ -14,7 +15,7 @@ const FILTERS: { key: FilterKey; label: string; icon: typeof Clock }[] = [
 
 export default function ReminderCalendar() {
   const {
-    reminders, customers, treatments, points,
+    reminders, customers, treatments,
     loadReminders, loadAllTreatments, addReminder,
     updateReminder, deleteReminder, setSelectedCustomerId,
     setSelectedTreatmentId, setActiveTab,
@@ -22,6 +23,8 @@ export default function ReminderCalendar() {
 
   const [filter, setFilter] = useState<FilterKey>('today');
   const [selectedReminder, setSelectedReminder] = useState<Reminder | null>(null);
+  const [treatmentPoints, setTreatmentPoints] = useState<InjectionPoint[]>([]);
+  const [loadingPoints, setLoadingPoints] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ remindDate: '', content: '', customerId: 0, treatmentId: 0 });
   const [contactResult, setContactResult] = useState('');
@@ -30,6 +33,29 @@ export default function ReminderCalendar() {
     loadReminders();
     loadAllTreatments();
   }, [loadReminders, loadAllTreatments]);
+
+  const loadPointsForReminder = useCallback(async (reminder: Reminder) => {
+    if (!reminder.treatmentId) {
+      setTreatmentPoints([]);
+      return;
+    }
+    setLoadingPoints(true);
+    try {
+      const pts = await db.injectionPoints.where('treatmentId').equals(reminder.treatmentId).toArray();
+      setTreatmentPoints(pts);
+    } finally {
+      setLoadingPoints(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedReminder) {
+      loadPointsForReminder(selectedReminder);
+      setContactResult(selectedReminder.contactResult || '');
+    } else {
+      setTreatmentPoints([]);
+    }
+  }, [selectedReminder, loadPointsForReminder]);
 
   useEffect(() => {
     const today = new Date().toISOString().slice(0, 10);
@@ -60,7 +86,6 @@ export default function ReminderCalendar() {
 
   const getCustomer = (id: number) => customers.find(c => c.id === id);
   const getTreatment = (id: number) => treatments.find(t => t.id === id);
-  const getPointsForTreatment = (tid: number) => points.filter(p => p.treatmentId === tid);
 
   const customerTreatments = useMemo(() => {
     if (!form.customerId) return [];
@@ -107,14 +132,28 @@ export default function ReminderCalendar() {
   };
 
   const handleMarkContacted = () => {
-    if (!selectedReminder?.id) return;
+    if (!selectedReminder?.id || !contactResult.trim()) return;
+    const now = new Date().toISOString();
     updateReminder(selectedReminder.id, {
       contacted: true,
-      contactResult: contactResult,
-      contactedAt: new Date().toISOString(),
+      completed: true,
+      contactResult: contactResult.trim(),
+      contactedAt: now,
     });
     setContactResult('');
     setSelectedReminder(null);
+  };
+
+  const handleMarkComplete = () => {
+    if (!selectedReminder?.id) return;
+    updateReminder(selectedReminder.id, {
+      completed: !selectedReminder.completed,
+      ...(!selectedReminder.completed ? {
+        contacted: selectedReminder.contacted || true,
+        contactedAt: selectedReminder.contactedAt || new Date().toISOString(),
+      } : {}),
+    });
+    if (selectedReminder.completed) setSelectedReminder(null);
   };
 
   const handleGoToTreatment = (r: Reminder) => {
@@ -171,7 +210,7 @@ export default function ReminderCalendar() {
             return (
               <div
                 key={r.id}
-                onClick={() => { setSelectedReminder(r); setContactResult(r.contactResult || ''); }}
+                onClick={() => setSelectedReminder(r)}
                 className={`rounded-lg p-3 cursor-pointer transition-colors border ${
                   selectedReminder?.id === r.id
                     ? 'bg-[#0F3460] border-[#E8D5B7]/30'
@@ -259,12 +298,15 @@ export default function ReminderCalendar() {
             <div className="px-5 py-4 border-b border-[#0F3460] flex items-center justify-between">
               <div className="text-base font-semibold">提醒详情</div>
               <div className="flex items-center gap-1.5">
-                {!selectedReminder.completed && (
-                  <button onClick={() => updateReminder(selectedReminder.id!, { completed: true })}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-green-500/20 text-green-300 hover:bg-green-500/30">
-                    <Check size={12} /> 标记完成
-                  </button>
-                )}
+                <button onClick={handleMarkComplete}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                    selectedReminder.completed
+                      ? 'bg-green-500/20 text-green-300'
+                      : 'bg-green-500/10 text-[#E8D5B7]/60 hover:bg-green-500/20 hover:text-green-300'
+                  }`}>
+                  <Check size={12} />
+                  {selectedReminder.completed ? '已完成' : '标记完成'}
+                </button>
                 <button onClick={() => { deleteReminder(selectedReminder.id!); setSelectedReminder(null); }}
                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-[#E94560]/20 text-[#E94560] hover:bg-[#E94560]/30">
                   <Trash2 size={12} /> 删除
@@ -276,11 +318,11 @@ export default function ReminderCalendar() {
               {(() => {
                 const customer = getCustomer(selectedReminder.customerId);
                 const treatment = getTreatment(selectedReminder.treatmentId);
-                const treatmentPoints = getPointsForTreatment(selectedReminder.treatmentId);
+                const pts = treatmentPoints;
                 const badge = getStatusBadge(selectedReminder);
                 return (
                   <div className="space-y-4">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className={`text-xs px-2 py-0.5 rounded ${badge.color}`}>{badge.label}</span>
                       {selectedReminder.contacted && (
                         <span className="text-xs px-2 py-0.5 rounded bg-blue-500/20 text-blue-300">已联系</span>
@@ -319,55 +361,86 @@ export default function ReminderCalendar() {
                       <div className="text-sm">{selectedReminder.content || '-'}</div>
                     </div>
 
-                    {treatmentPoints.length > 0 && (
-                      <div className="rounded-lg bg-[#1A1A2E] p-4">
-                        <div className="text-xs text-[#E8D5B7]/50 mb-2">关联点位摘要</div>
+                    <div className="rounded-lg bg-[#1A1A2E] p-4">
+                      <div className="text-xs text-[#E8D5B7]/50 mb-2">关联点位摘要</div>
+                      {loadingPoints ? (
+                        <div className="text-sm text-[#E8D5B7]/40">加载中...</div>
+                      ) : pts.length === 0 ? (
+                        <div className="text-sm text-[#E8D5B7]/40">该疗程暂无点位记录</div>
+                      ) : (
                         <div className="space-y-2">
-                          {treatmentPoints.slice(0, 6).map(p => (
+                          {pts.slice(0, 6).map(p => (
                             <div key={p.id} className="flex items-center gap-3 text-xs">
                               <span className="w-5 h-5 flex items-center justify-center rounded-full bg-[#E94560] text-white text-[10px] font-bold">#{p.pointNumber}</span>
-                              <span className="flex-1 min-w-0 truncate">{p.productName} · {p.layer}</span>
+                              <span className="flex-1 min-w-0 truncate">{p.productName} · {p.layer || '-'}</span>
                               <span className="text-[#E8D5B7]/60">{p.dosage}ml × {p.needleCount}针</span>
                             </div>
                           ))}
-                          {treatmentPoints.length > 6 && (
-                            <div className="text-xs text-[#E8D5B7]/40">共 {treatmentPoints.length} 个点位</div>
+                          {pts.length > 6 && (
+                            <div className="text-xs text-[#E8D5B7]/40">共 {pts.length} 个点位</div>
                           )}
-                          {treatmentPoints.length > 0 && (
-                            <div className="pt-2 border-t border-[#0F3460] flex gap-4 text-xs mt-2">
-                              <div>合计剂量：<span className="text-[#E8D5B7] font-medium">{treatmentPoints.reduce((s, p) => s + (p.dosage || 0), 0)}ml</span></div>
-                              <div>合计针数：<span className="text-[#E8D5B7] font-medium">{treatmentPoints.reduce((s, p) => s + (p.needleCount || 0), 0)}针</span></div>
-                            </div>
-                          )}
+                          <div className="pt-2 border-t border-[#0F3460] flex gap-4 text-xs mt-2">
+                            <div>合计剂量：<span className="text-[#E8D5B7] font-medium">{pts.reduce((s, p) => s + (p.dosage || 0), 0)}ml</span></div>
+                            <div>合计针数：<span className="text-[#E8D5B7] font-medium">{pts.reduce((s, p) => s + (p.needleCount || 0), 0)}针</span></div>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
                     {selectedReminder.contacted && selectedReminder.contactResult && (
                       <div className="rounded-lg bg-[#1A1A2E] p-4">
-                        <div className="text-xs text-[#E8D5B7]/50 mb-2">上次联系结果</div>
-                        <div className="text-sm">{selectedReminder.contactResult}</div>
+                        <div className="text-xs text-[#E8D5B7]/50 mb-2">联系结果记录</div>
+                        <div className="text-sm whitespace-pre-wrap">{selectedReminder.contactResult}</div>
                         {selectedReminder.contactedAt && (
-                          <div className="text-xs text-[#E8D5B7]/40 mt-2">{new Date(selectedReminder.contactedAt).toLocaleString('zh-CN')}</div>
+                          <div className="text-xs text-[#E8D5B7]/40 mt-2">
+                            联系时间：{new Date(selectedReminder.contactedAt).toLocaleString('zh-CN')}
+                          </div>
                         )}
                       </div>
                     )}
 
-                    {!selectedReminder.contacted && !selectedReminder.completed && (
+                    {!selectedReminder.completed && !selectedReminder.contacted && (
                       <div className="rounded-lg bg-[#1A1A2E] p-4">
-                        <div className="text-xs text-[#E8D5B7]/70 mb-2">标记已联系</div>
+                        <div className="text-xs text-[#E8D5B7]/70 mb-2">联系并记录随访结果（保存后视为已完成）</div>
                         <textarea
                           value={contactResult}
                           onChange={e => setContactResult(e.target.value)}
-                          placeholder="记录联系结果，如：已告知注意事项、客户改约到下周一等..."
-                          className="w-full px-3 py-2 rounded-lg text-sm bg-[#16213E] text-[#E8D5B7] border border-[#0F3460] outline-none placeholder:text-[#E8D5B7]/30 resize-none h-20"
+                          placeholder="填写随访沟通结果，如：已告知注意事项、客户改约到下周一、效果良好按计划复诊等..."
+                          className="w-full px-3 py-2 rounded-lg text-sm bg-[#16213E] text-[#E8D5B7] border border-[#0F3460] outline-none placeholder:text-[#E8D5B7]/30 resize-none h-24"
                         />
                         <button
                           onClick={handleMarkContacted}
                           disabled={!contactResult.trim()}
                           className="mt-3 w-full py-2 rounded-lg text-sm font-medium bg-[#0F3460] text-[#E8D5B7] hover:bg-[#0F3460]/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
-                          确认已联系
+                          确认已联系并归档
+                        </button>
+                      </div>
+                    )}
+
+                    {selectedReminder.completed && !selectedReminder.contacted && (
+                      <div className="rounded-lg bg-[#1A1A2E] p-4">
+                        <div className="text-xs text-[#E8D5B7]/50 mb-2">此提醒已标记完成，但未记录联系结果</div>
+                        <textarea
+                          value={contactResult}
+                          onChange={e => setContactResult(e.target.value)}
+                          placeholder="补充联系结果（可选）"
+                          className="w-full px-3 py-2 rounded-lg text-sm bg-[#16213E] text-[#E8D5B7] border border-[#0F3460] outline-none placeholder:text-[#E8D5B7]/30 resize-none h-20"
+                        />
+                        <button
+                          onClick={() => {
+                            if (!contactResult.trim()) return;
+                            updateReminder(selectedReminder!.id!, {
+                              contacted: true,
+                              contactResult: contactResult.trim(),
+                              contactedAt: new Date().toISOString(),
+                            });
+                            setContactResult('');
+                          }}
+                          disabled={!contactResult.trim()}
+                          className="mt-3 w-full py-2 rounded-lg text-sm font-medium bg-[#0F3460] text-[#E8D5B7] hover:bg-[#0F3460]/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          补充联系记录
                         </button>
                       </div>
                     )}

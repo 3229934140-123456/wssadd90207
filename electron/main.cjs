@@ -10,15 +10,14 @@ function createWindow() {
     minWidth: 1280,
     minHeight: 768,
     title: '微整注射点位记录',
-    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      webSecurity: true,
+      webSecurity: false,
     },
   });
 
-  const isDev = !app.isPackaged || process.env.ELECTRON_DEV === '1';
+  const isDev = !app.isPackaged;
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
@@ -32,7 +31,11 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  const dataDir = path.join(app.getPath('userData'), 'indexeddb');
+  console.log('数据存储路径:', dataDir);
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

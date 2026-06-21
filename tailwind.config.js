@@ -9,7 +9,7 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['Noto Sans SC', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        sans: ['"Microsoft YaHei"', '"微软雅黑"', '"PingFang SC"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'sans-serif'],
       },
       colors: {
         indigo: {
